@@ -1,5 +1,5 @@
 # Please run the following in your terminal
-#  pip install streamlit langchain langchain-google-genai pypdf faiss-cpu python-dotenv qdrant-client nest_asyncio
+# pip install streamlit langchain langchain-google-genai pypdf faiss-cpu python-dotenv qdrant-client nest_asyncio langchain-community
 
 import asyncio
 import streamlit as st
