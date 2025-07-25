@@ -1,5 +1,5 @@
 # Please run the following in your terminal
-# pip install streamlit langchain langchain-google-genai pypdf faiss-cpu python-dotenv qdrant-client nest_asyncio langchain-community
+# pip install streamlit langchain langchain-google-genai pypdf faiss-cpu python-dotenv qdrant-client nest_asyncio rank_bm25 langchain-community
 
 import asyncio
 import streamlit as st
@@ -16,6 +16,7 @@ nest_asyncio.apply()
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
+from langchain.retrievers import BM25Retriever, EnsembleRetriever
 
 # Google AI specific imports
 from langchain.chat_models import init_chat_model
@@ -34,8 +35,8 @@ load_dotenv()
 # os.environ["GOOGLE_API_KEY"] = "YOUR_GOOGLE_API_KEY" # Uncomment and replace if not using .env
 
 # --- Streamlit UI Setup ---
-st.set_page_config(page_title="RAG Pipeline with LangChain, Qdrant & Semantic Search(Google AI)", layout="wide")
-st.title("📄 RAG Pipeline with LangChain, Qdrant & Semantic Search (Google AI)")
+st.set_page_config(page_title="RAG with LangChain, Qdrant & Semantic Search(Google AI)", layout="wide")
+st.title("📄 RAG Pipeline with LangChain, Qdrant, BM25 & Semantic Search (Google AI)")
 st.markdown("""
     Upload a document (PDF or TXT), ask questions, and get answers based on its content.
     This app uses LangChain for orchestration, and Qdrant & Semantic Search for efficient similarity search,
@@ -102,7 +103,7 @@ def load_and_process_document(uploaded_files, chunk_size, chunk_overlap):
     st.success(f"Split document into {len(chunks)} chunks.")
     return chunks
 
-#@st.cache_resource
+# @st.cache_resource
 def initialize_vectorEmbeddings(chunks):
     # Create embeddings
     st.info("Generating embeddings and building Qdrant index... This may take a moment.")
@@ -134,23 +135,40 @@ def initialize_vectorEmbeddings(chunks):
 
         # Run the async helper function using asyncio.run()
         vector_store = asyncio.run(_create_embeddings_and_vector_store(chunks))
-        st.success("Qdrant vector store created successfully!")
-        return vector_store
+        
+        # Create BM25 Retriever
+        # BM25Retriever.from_documents builds the BM25 index from the text chunks
+        bm25_retriever = BM25Retriever.from_documents(chunks)
+        # You can set k to control the number of documents retrieved by BM25
+        bm25_retriever.k = 5 # Retrieve top 5 documents by BM25 score
+
+        st.success("Qdrant vector store and BM25 retriever created successfully!")
+        return vector_store, bm25_retriever # Return both retrievers
     except Exception as e:
-        st.error(f"Error creating embeddings or Qdrant index: {e}")
+        st.error(f"Error creating embeddings, Qdrant index, or BM25 retriever: {e}")
         st.error("Please ensure your Google API key is valid and you have an active subscription.")
-        return None
+        return None, None # Return None for both in case of error
 
 
-def get_rag_response(vector_store, query):
+# @st.cache_resource
+def get_rag_response(vector_store, bm25_retriever, query):
     """
-    Performs retrieval and generation using the Qdrant vector store and an LLM.
+    Performs retrieval and generation using a hybrid (Qdrant + BM25) retriever
+    and a Google AI LLM.
     """
-    if vector_store is None:
-        st.error("Vector store not available. Please upload and process a document first.")
+    if vector_store is None or bm25_retriever is None:
+        st.error("Retrievers not available. Please upload and process a document first.")
         return "Error: Document not processed."
 
+    # Use ChatGoogleGenerativeAI for the LLM
     llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7)
+
+    # Create an EnsembleRetriever to combine Qdrant (semantic) and BM25 (keyword) retrievers
+    # Weights determine the importance of each retriever (sum should be 1)
+    ensemble_retriever = EnsembleRetriever(
+        retrievers=[vector_store.as_retriever(), bm25_retriever],
+        weights=[0.5, 0.5] # 50% semantic, 50% keyword search
+    )
 
     qa_chain = RetrievalQA.from_chain_type(
         llm=llm,
@@ -167,6 +185,7 @@ def get_rag_response(vector_store, query):
         return "Error: Could not get a response from the LLM."
 
 
+# @st.cache_resource
 async def perform_semantic_search(vector_store, query, k=5):
     """
     Performs semantic search on the vector store and returns top-k relevant chunks.
@@ -189,28 +208,31 @@ st.write('Multiple PDF Upload')
 
 uploaded_files = st.file_uploader("Upload PDF files", accept_multiple_files=True, type="pdf")
 
-#uploaded_file = st.file_uploader("Upload your document (PDF or TXT)", type=["pdf", "txt"])
-
 chunk_size = st.slider("Chunk Size:", min_value=100, max_value=2000, value=500, step=50)
 chunk_overlap = st.slider("Chunk Overlap:", min_value=0, max_value=500, value=50, step=10)
 
 vector_store = None
+bm25_retriever = None
+
 if uploaded_files:
     st.write(f"Total Number of files: {len(uploaded_files)}")
     chunks = load_and_process_document(uploaded_files, chunk_size, chunk_overlap)
-    vector_store = initialize_vectorEmbeddings(chunks)
+    vector_store, bm25_retriever = initialize_vectorEmbeddings(chunks)
 else:
     st.info("Upload a document to start asking questions.")
 
-if vector_store:
+# Only proceed if both retrievers are successfully initialized
+if vector_store and bm25_retriever:
     st.markdown("---")
-    st.header("Ask a Question for Qdrant")
-    user_query = st.text_area("Your question:", placeholder="E.g., What is the main topic of this document?", height=100)
+    st.header("Ask a Question (Hybrid RAG)")
+    st.info("This RAG uses a combination of semantic (Qdrant) and keyword (BM25) search.")
+    user_rag_query = st.text_area("Your question for RAG:", placeholder="E.g., What is the main topic of this document?", height=100, key="rag_query")
 
-    if st.button("Get Answer"):
-        if user_query:
+    if st.button("Get Answer (Hybrid RAG)"):
+        if user_rag_query:
             with st.spinner("Getting your answer..."):
-                rag_response = get_rag_response(vector_store, user_query)
+                # Pass both retrievers to the RAG response function
+                rag_response = get_rag_response(vector_store, bm25_retriever, user_rag_query)
 
                 if rag_response and "result" in rag_response:
                     st.subheader("Answer:")
@@ -227,8 +249,8 @@ if vector_store:
                 else:
                     st.error("Could not retrieve an answer. Please try re-uploading the document or a different query.")
         else:
-            st.warning("Please enter a question for Qdrant.")
-    
+            st.warning("Please enter a question for RAG.")
+
     st.markdown("---")
     st.header("Perform Semantic Search")
     user_semantic_query = st.text_area("Your query for semantic search:", placeholder="E.g., Key concepts discussed.", height=100, key="semantic_query")
@@ -244,7 +266,7 @@ if vector_store:
                     st.subheader(f"Top {len(search_results)} Relevant Chunks:")
                     for i, (doc, score) in enumerate(search_results):
                         st.write(f"**Result {i+1} (Score: {score:.4f}):**")
-                        st.markdown(f"```\n{doc.page_content[:500]}...\n```")
+                        st.markdown(f"```\n{doc.page_content[:1000]}...\n```")
                         if hasattr(doc, 'metadata') and 'page' in doc.metadata:
                             st.write(f"Page: {doc.metadata['page'] + 1}")
                         st.markdown("---")
@@ -254,4 +276,4 @@ if vector_store:
             st.warning("Please enter a query for semantic search.")
 
 st.markdown("---")
-st.caption("Built with LangChain, Qdrant, Semantic Search, and Streamlit.")
+st.caption("Built with LangChain, Qdrant+BM25, Semantic Search, and Streamlit.")

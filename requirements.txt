@@ -22,8 +22,8 @@ google-api-core==2.25.1
 google-auth==2.40.3
 googleapis-common-protos==1.70.0
 greenlet==3.2.3
-grpcio==1.73.1
-grpcio-status==1.73.1
+grpcio==1.74.0
+grpcio-status==1.74.0
 h11==0.16.0
 h2==4.2.0
 hpack==4.1.0
@@ -47,7 +47,7 @@ MarkupSafe==3.0.2
 marshmallow==3.26.1
 multidict==6.6.3
 mypy_extensions==1.1.0
-narwhals==1.48.0
+narwhals==1.48.1
 nest-asyncio==1.6.0
 numpy==2.3.1
 orjson==3.11.0
@@ -72,6 +72,7 @@ pytz==2025.2
 # pywin32==311
 PyYAML==6.0.2
 qdrant-client==1.15.0
+rank-bm25==0.2.2
 referencing==0.36.2
 requests==2.32.4
 requests-toolbelt==1.0.0
