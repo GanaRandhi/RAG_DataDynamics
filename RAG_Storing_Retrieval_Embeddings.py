@@ -173,7 +173,7 @@ def get_rag_response(vector_store, bm25_retriever, query):
     qa_chain = RetrievalQA.from_chain_type(
         llm=llm,
         chain_type="stuff", # "stuff" combines all retrieved docs into one prompt
-        retriever=vector_store.as_retriever(),
+        retriever=ensemble_retriever,
         return_source_documents=True # To show which parts of the document were used
     )
 
