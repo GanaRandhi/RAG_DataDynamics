@@ -12,3 +12,5 @@ SentenceTransformers
 It currently supports below llm models. Users can customize this in the UI:
 
 Gemini-2.0
+
+https://ragdatadynamics.streamlit.app/
